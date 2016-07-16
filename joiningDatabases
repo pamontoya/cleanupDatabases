@@ -1,0 +1,269 @@
+
+################## CODIGO PARA COMPILAR DATOS DE RAGOS DE PROYECTO PARAMOS ##################
+#######################################################################################################################################  
+######### Para correr el codigo debe ser verificado la correspondencia de nombres entre las matrices. Que cada nombre presente el mismo nombre, escrito de igual manera en las dos matrices ############## 
+######### Tambien debe verificarse que no hayan especies en una de las matrices que no se encuentren reportadas en la segunda ############## 
+######### El Hand Wing Index (HWI) ha sido calculado y esta incluido dentro de la matriz de rasgos funcionales  #########
+######### Los nombres de las columnas de rasgos en la matriz funcional deben ser los mismos que en la matriz de recopilacion de datos de museo y literatura: ############## 
+######### Peso / L.CulmenTotal / L.CulmenExpuesto / AltoPico / AnchoPico_(narina) / GAPE / L.Ala / HWI / L.Cola / Grad.Cola / L.Tarso / L.Hallux ############## 
+######### El area alar y la envergadura deben no seran incluidos #########
+##########################################################################################################################################
+
+####################################################################################
+################# I. CARGAR Y COMPILAR DATOS RECOPILADOS EN CAMPO #################
+####################################################################################
+
+####### Definir directorio de trabajo y zona de estudio #######
+####### La zona de estudio (p.e. Mellizas o Distrital) sera la que ira en el nombre de los archivos guardados #######
+setwd("")
+zona <- "Distrital"
+
+####### Cargar matrices estructural y funcional #######
+est <- read.delim(file.choose(),header=T)
+fun <- read.delim(file.choose(),header=T)
+
+####### Identificar cada estaci??n de los transectos: Transecto_Estacion #######
+transectos <- as.character(paste(est$Transecto,est$Estacion,sep="_"))
+est <- data.frame(est,transectos,num=1)
+rm(transectos)
+transectos <- as.character(paste(fun$Transecto,fun$Estacion,sep="_"))
+fun <- data.frame(fun,transectos)
+
+####### Obtener el listado de especies por estaci??n #######
+abunda <- tapply(est$num,INDEX=list(est$Nombre.cientifico,est$transectos),FUN=sum)
+abunda[is.na(abunda)]<-0
+abunda <- as.data.frame(as.table(abunda))
+colnames(abunda) <- c("Especie","Transecto","Abundancia")
+abunda <- abunda[which(abunda$Abundancia>0),]
+
+####### Obtener la elevaci??n para cada estaci??n #######
+testElev <- tapply(est$Elevacion,INDEX=est$transectos,unique)
+
+asignarElev <- function(x) 
+{
+  for(i in 1:length(x))
+  {
+    factor <- x[i]
+    nombre <- names(factor) 
+    if(length(factor)>1)
+    {
+      stop("Las estaciones deben tener un unico valor de altura")
+    }
+    if(length(factor)==1)
+    {
+      abunda[which(abunda$Transecto==nombre),4] <- factor[[1]]
+    }
+  }
+  return(abunda)
+}
+
+abunda <- cbind(abunda,Elevacion=NA)
+abunda <- asignarElev(testElev)
+
+####### Seleccionar columnas de rasgos y obtener medianas: Los valores de rasgos deben ser num??ricos #######
+interesCol <- c("Nombre.cientifico","Transecto","transectos","Peso","L.CulmenTotal","L.CulmenExpuesto","AltoPico","AnchoPico_.narina.","GAPE","L.Ala","L.Cola","Grad.Cola","L.Tarso","L.Hallux")
+fun <- fun[,interesCol]
+
+especies <- unique(fun$Nombre.cientifico)
+transectos <- unique(fun$Transecto)
+funcional <- matrix(nrow=0,ncol=13)
+
+for(i in 1:length(especies))
+{
+  subSpp <- fun[which(fun$Nombre.cientifico==especies[i]),]
+  if(all(apply(fun[,4:ncol(fun)],2,is.numeric)=="TRUE"))
+  {
+    for(j in 1:length(transectos))
+    {
+      tr <- subSpp[which(subSpp$Transecto == transectos[j]),]
+      meanTraits <- apply(tr[,4:14],2,function(x){median(x,na.rm=T)})
+      funcionalSpp <- data.frame(Especie=especies[i],Transecto=transectos[j],t(as.data.frame(meanTraits)))
+      funcional <- rbind(funcional,funcionalSpp)
+    }
+  }
+  if(!all(apply(fun[,4:ncol(fun)],2,is.numeric)=="TRUE"))
+  {
+    stop("Los rasgos deben contener s??lo valores num??ricos")
+  }
+}
+
+rownames(funcional)<-seq(1:nrow(funcional))
+
+####### Se unen los datos de la matriz estructural (abundancia y elevaci??n) con la mediana de cada rasgo por especie #######
+####### return: 'traitMatrix' matriz que contendr?? compilaci??n de datos de rasgos obtenidos de campo (ingresan en la matriz 'fun') #######
+id <- as.character(abunda$Transecto)
+id <- unlist(lapply(id,function(x){strsplit(x,"_")[[1]][1]}))
+abunda <- data.frame(abunda,id)
+
+traitMatrix <- matrix(ncol=15,nrow=0)
+
+for(i in 1:length(transectos))
+{
+  tr <- funcional[which(funcional$Transecto==transectos[i]),]
+  abundaTR <- abunda[which(abunda$id == transectos[i]),]
+  spp <- unique(tr$Especie)
+  for(j in 1:length(spp))
+  {
+    sppMOD <- abundaTR[which(abundaTR$Especie==as.character(spp[j])),]
+    if(nrow(sppMOD)!=0)
+    {
+      rows <- matrix(NA,ncol=11,nrow=nrow(sppMOD))
+      sppMOD <- cbind(sppMOD,rows)
+      traitsSp <- as.numeric(tr[which(tr$Especie==spp[j]),3:13])
+      for(h in 1:nrow(sppMOD))
+      {
+        sppMOD[h,6:16] <- traitsSp
+      }
+      traitMatrix <- rbind(traitMatrix,sppMOD)
+    }
+    if(nrow(sppMOD)==0)
+    {
+      next
+    }
+  }
+}
+
+colnames(traitMatrix) <- c(colnames(abunda),colnames(funcional[,3:13]))
+head(traitMatrix)
+traitMatrix[,1] <- gsub(" ","_", traitMatrix[,1])
+
+####### Guardar 'traitMatrix' en el directorio seleccionado #######
+write.table(traitMatrix,paste(zona,"Rasgos_DATOS_CAMPO.txt",sep="_"))
+
+
+###########################################################################################
+############## II. COMPLETAR MATRIZ DE RASGOS CON DATOS DE MUSEO Y LITERATURA ##############
+###########################################################################################
+
+####### Cargar matriz con rasgos de museo y literatura #######
+museo <- read.delim(file.choose(),header=T)
+museoMedidas <- with(museo,aggregate(museo[,43:55],by=list(Especie=museo$name),FUN=function(x){median(x,na.rm=T)}))
+tip.label <- museo[match(museoMedidas[,1],museo[,36]),c(35,37,40)]
+museoMedidas <- cbind(tip.label,museoMedidas)
+museoMedidas[,2] <- gsub(" ","_", museoMedidas[,2])
+museoMedidas[,3] <- gsub(" ","_", museoMedidas[,3])
+museoMedidas[,4] <- gsub(" ","_", museoMedidas[,4])
+
+names <- as.character(traitMatrix$Especie)
+
+####### OPCION 1: Completar con datos de museo s??lo aquellas especies que no tengan registrado ning??n rasgo #######
+####### return: 'newTraitMatrixParcial' matriz que compila la informaci??n de rasgos de museo y campo para cada especie #######
+newTraitMatrixParcial <- matrix(ncol=ncol(traitMatrix),nrow=0)
+comparacion <- c("TipLabel","Nombre.Cientifico","Especie","Nombre.aceptado.usado")
+
+for(i in 1:length(transectos))
+{
+  filtro <- traitMatrix[which(traitMatrix$id==transectos[i]),]
+  for(j in 1:nrow(filtro))
+  {
+    row.has.na <- filtro[j,6:ncol(filtro)]
+    if(all(is.na(row.has.na)))
+    {
+      name <- filtro[j,1]
+      m <- c()
+      compare <- museoMedidas[,comparacion]
+      for(n in 1:ncol(compare))
+      {
+        numberRow <- match(name,compare[,n])
+        if(is.na(numberRow))
+        {
+          next
+        }
+        if(!is.na(numberRow))
+        {
+          m <- c(m,numberRow)
+          break
+        }
+      }
+   
+      if(class(m)=="NULL" || is.na(m))
+      {
+        next
+      }
+      if(!is.na(m))
+      {
+        M <- museoMedidas[m,]
+        filtro[j,"L.CulmenTotal"] <- M[,"L.CulmenTotal"]
+        filtro[j,"L.CulmenExpuesto"] <- M[,"L.CulmenExpuesto"]
+        filtro[j,"AltoPico"] <- M[,"AltoPico"]
+        filtro[j,"AnchoPico_.narina."] <- M[,"AnchoPico_.narina."]
+        filtro[j,"GAPE"] <- M[,"GAPE"]
+        filtro[j,"L.Ala"] <- M[,"L.Ala"]
+        filtro[j,"L.Cola"] <- M[,"L.Cola"]
+        filtro[j,"Grad.Cola"] <- M[,"Grad.Cola"]
+        filtro[j,"L.Tarso"] <- M[,"L.Tarso"]
+        filtro[j,"L.Hallux"] <- M[,"L.Hallux"]
+        filtro[j,"Peso"] <- M[,"Peso"]
+      }
+    }
+    if(!all(is.na(row.has.na)))
+    {
+      next
+    }
+  }
+  newTraitMatrixParcial <- rbind(newTraitMatrixParcial,filtro)
+}
+
+####### Guardar 'newTraitMatrixParcial' en el directorio seleccionado #######
+write.table(newTraitMatrixParcial,paste(zona,"Rasgos_DATOS_COMPLETOS_MUSEO.txt",sep="_"),row.names=F)
+
+####### OPCION 2: Completar con datos de museo todos los rasgos que no tengan informaci??n #######
+####### return: 'newTraitMatrixTotal' matriz que compila la informaci??n de rasgos de museo y campo para cada especie #######
+newTraitMatrixTotal <- matrix(ncol=ncol(traitMatrix),nrow=0)
+comparacion <- c("TipLabel","Nombre.Cientifico","Especie","Nombre.aceptado.usado")
+
+for(i in 1:length(transectos))
+{
+  filtro <- traitMatrix[which(traitMatrix$id==transectos[i]),]
+  for(j in 1:nrow(filtro))
+  {
+    row.has.na <- filtro[j,6:ncol(filtro)]
+    if(any(is.na(row.has.na)))
+    {
+      name <- filtro[j,1]
+      m <- c()
+      compare <- museoMedidas[,comparacion]
+      for(n in 1:ncol(compare))
+      {
+        numberRow <- match(name,compare[,n])
+        if(is.na(numberRow))
+        {
+          next
+	    
+        }
+        if(!is.na(numberRow))
+        {
+          m <- c(m,numberRow)
+          break
+        }
+      }
+   
+      if(class(m)=="NULL" || is.na(m))
+      {
+        next
+      }
+      if(!is.na(m))
+      {
+        M <- museoMedidas[m,]
+	      numberCols <- which(is.na(filtro[j,]))
+	      for(k in 1:length(numberCols))
+		    {
+		      nameCol <- colnames(filtro)[numberCols[k]]
+		      filtro[j,nameCol] <- M[,nameCol]
+		    }
+      }
+    }
+    if(!any(is.na(row.has.na)))
+    {
+      next
+    }
+  }
+  newTraitMatrixTotal <- rbind(newTraitMatrixTotal,filtro)
+}
+
+####### Guardar 'newTraitMatrixTotal' en el directorio seleccionado #######
+write.table(newTraitMatrixTotal,paste(zona,"Rasgos_DATOS_COMPLETOS_MUSEO_CAMPO.txt",sep="_"),row.names=F)
+
+
+############################ END OF CODE ############################
+
